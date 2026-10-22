@@ -1,5 +1,5 @@
+
 terraform {
-  required_version = ">= 1.0.0"
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -9,31 +9,12 @@ terraform {
 }
 
 provider "aws" {
-  region = var.aws_region
+  region = "ap-south-1"
 }
 
-variable "aws_region" {
-  description = "AWS region for resources"
-  type        = string
-  default     = "us-east-1"
-}
-
-variable "instance_type" {
-  description = "EC2 instance type"
-  type        = string
-  default     = "t2.micro"
-}
-
-variable "key_name" {
-  description = "Name of existing SSH key pair"
-  type        = string
-  default     = "vle-key"
-}
-
-# Fetch latest Ubuntu 22.04 LTS AMI
 data "aws_ami" "ubuntu" {
   most_recent = true
-  owners      = ["099720109477"] # Canonical
+  owners      = ["099720109477"]
 
   filter {
     name   = "name"
@@ -46,54 +27,61 @@ data "aws_ami" "ubuntu" {
   }
 }
 
-# Security group allowing SSH and HTTP
-resource "aws_security_group" "web_sg" {
-  name        = "vle8-web-sg"
-  description = "Allow SSH and HTTP inbound traffic"
+variable "my_ip" {
+  description = "Your public IPv4 address in CIDR notation"
+  type        = string
+}
+
+resource "aws_security_group" "vle8" {
+  name        = "vle8-blue-green-sg"
+  description = "Security group for VLE8 lab"
 
   ingress {
-    description = "SSH"
+    description = "SSH - restrict to your IP"
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = [var.my_ip]
   }
 
   ingress {
-    description = "HTTP"
+    description = "HTTP application"
     from_port   = 80
     to_port     = 80
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  ingress {
+    description = "Jenkins UI - restrict to your IP"
+    from_port   = 8080
+    to_port     = 8080
+    protocol    = "tcp"
+    cidr_blocks = [var.my_ip]
+  }
+
   egress {
-    from_port        = 0
-    to_port          = 0
-    protocol         = "-1"
-    cidr_blocks      = ["0.0.0.0/0"]
-    ipv6_cidr_blocks = ["::/0"]
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
   tags = {
-    Name = "vle8-web-sg"
+    Name = "VLE8-Security-Group"
   }
 }
 
-# EC2 Web Server instance
-resource "aws_instance" "web" {
+resource "aws_instance" "vle8" {
   ami                    = data.aws_ami.ubuntu.id
-  instance_type          = var.instance_type
-  key_name               = var.key_name
-  vpc_security_group_ids = [aws_security_group.web_sg.id]
+  instance_type          = "t3.small"
+  vpc_security_group_ids = [aws_security_group.vle8.id]
 
   tags = {
-    Name        = "vle8-web-server"
-    Environment = "dev"
+    Name = "VLE8-Blue-Green"
   }
 }
 
-output "instance_public_ip" {
-  description = "Public IP address of the deployed EC2 instance"
-  value       = aws_instance.web.public_ip
+output "public_ip" {
+  value = aws_instance.vle8.public_ip
 }
