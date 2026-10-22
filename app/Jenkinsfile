@@ -1,104 +1,132 @@
+
 pipeline {
     agent any
 
     environment {
-        APP_NAME     = 'vle8-app'
-        IMAGE_TAG    = "${BUILD_NUMBER}"
-        DOCKER_IMAGE = "${APP_NAME}:${IMAGE_TAG}"
-        CONTAINER_PORT = '8083'
+        BLUE_PORT  = '8081'
+        GREEN_PORT = '8082'
+        APP_NAME   = 'vle8-app'
     }
 
     stages {
         stage('Checkout') {
             steps {
-                echo 'Checking out source code...'
                 checkout scm
+                echo 'Source code checked out.'
             }
         }
 
-        stage('Lint & Validate') {
+        stage('Validate') {
             steps {
-                echo 'Validating Dockerfile and source files...'
                 sh '''
-                    # Basic Dockerfile syntax and presence check
-                    test -f app/Dockerfile || exit 1
-                    test -f app/index.html || exit 1
-                    echo "Source files validated successfully."
+                    test -f app/Dockerfile
+                    test -f app/index.html
+                    echo "Source validation passed."
                 '''
             }
         }
 
-        stage('Build Docker Image') {
+        stage('Build') {
             steps {
-                echo "Building Docker image: ${DOCKER_IMAGE}..."
                 dir('app') {
-                    sh "docker build -t ${DOCKER_IMAGE} -t ${APP_NAME}:latest ."
+                    sh '''
+                        docker build \
+                          -t ${APP_NAME}:${BUILD_NUMBER} \
+                          -t ${APP_NAME}:latest .
+                    '''
                 }
             }
         }
 
-       
-stage('Container Smoke Test') {
-    steps {
-        echo 'Running smoke test on built container...'
-        sh '''
-            docker rm -f ${APP_NAME}-test 2>/dev/null || true
+        stage('Detect Active Environment') {
+            steps {
+                script {
+                    def activePort = sh(
+                        script: "sudo grep -oE 'proxy_pass http://127\\.0\\.0\\.1:[0-9]+' /etc/nginx/conf.d/blue-green.conf | grep -oE '[0-9]+$'",
+                        returnStdout: true
+                    ).trim()
 
-            docker run -d \
-                --name ${APP_NAME}-test \
-                -p 127.0.0.1:${CONTAINER_PORT}:80 \
-                ${APP_NAME}:latest
+                    if (activePort == '8081') {
+                        env.TARGET_PORT = '8082'
+                        env.TARGET_NAME = 'green'
+                    } else if (activePort == '8082') {
+                        env.TARGET_PORT = '8081'
+                        env.TARGET_NAME = 'blue'
+                    } else {
+                        error("Unexpected Nginx upstream port: ${activePort}")
+                    }
 
-            trap 'docker rm -f ${APP_NAME}-test >/dev/null 2>&1 || true' EXIT
+                    echo "Currently active port: ${activePort}"
+                    echo "Deploying to inactive environment: ${env.TARGET_NAME} (${env.TARGET_PORT})"
+                }
+            }
+        }
 
-            sleep 3
+        stage('Deploy to Inactive Environment') {
+            steps {
+                sh '''
+                    docker rm -f ${TARGET_NAME} 2>/dev/null || true
 
-            curl -sSf \
-                http://127.0.0.1:${CONTAINER_PORT}/ \
-                > /dev/null
+                    docker run -d \
+                      --name ${TARGET_NAME} \
+                      --restart unless-stopped \
+                      -p 127.0.0.1:${TARGET_PORT}:80 \
+                      ${APP_NAME}:${BUILD_NUMBER}
+                '''
+            }
+        }
 
-            echo "Health check passed!"
-        '''
-    }
-}
+        stage('Health Check') {
+            steps {
+                sh '''
+                    set -e
 
+                    for attempt in $(seq 1 10); do
+                        if curl -fsS \
+                          http://127.0.0.1:${TARGET_PORT}/ \
+                          -o /tmp/vle8-health.html; then
+                            echo "Health check passed on port ${TARGET_PORT}."
+                            exit 0
+                        fi
 
-stage('Deploy') {
-    steps {
-        echo 'Deploying application behind Nginx...'
-        sh '''
-            # Remove any previous application container
-            docker rm -f ${APP_NAME}-prod 2>/dev/null || true
+                        echo "Waiting for ${TARGET_NAME}..."
+                        sleep 2
+                    done
 
-            # Run on an unused localhost port.
-            # Nginx must be configured to proxy to this port
-            # before this container is used for live traffic.
-            docker run -d \
-                --name ${APP_NAME}-prod \
-                -p 127.0.0.1:8084:80 \
-                --restart unless-stopped \
-                ${DOCKER_IMAGE}
+                    echo "Health check failed. Traffic will not be switched."
+                    exit 1
+                '''
+            }
+        }
 
-            # Verify the container responds
-            sleep 3
-            curl -sSf http://127.0.0.1:8084/ -o /dev/null
+        stage('Switch Traffic') {
+            steps {
+                sh 'sudo /usr/local/bin/vle8-switch ${TARGET_PORT}'
+            }
+        }
 
-            echo "Application container is healthy on port 8084."
-        '''
-    }
-}
-
+        stage('Verify Live Application') {
+            steps {
+                sh '''
+                    set -e
+                    curl -fsS http://127.0.0.1/ -o /dev/null
+                    echo "Live application is responding successfully."
+                '''
+            }
+        }
     }
 
     post {
+        success {
+            echo "Blue-Green deployment succeeded. Traffic is now routed to ${TARGET_NAME}."
+        }
+
+        failure {
+            echo 'Deployment failed. Review the stage logs; the traffic switch is performed only after the health check.'
+        }
+
         always {
             echo 'Pipeline execution complete.'
-        }
-        success {
-            echo "Build and Deployment completed successfully for build #${BUILD_NUMBER}!"
-        }
-        failure {
-            echo "Pipeline failed on build #${BUILD_NUMBER}. Please check logs."
         }
     }
 }
