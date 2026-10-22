@@ -63,20 +63,31 @@ stage('Container Smoke Test') {
 }
 
 
-        stage('Deploy') {
-            steps {
-                echo "Deploying application container..."
-                sh '''
-                    # Stop previous production container if running
-                    docker stop ${APP_NAME}-prod || true
-                    docker rm ${APP_NAME}-prod || true
+stage('Deploy') {
+    steps {
+        echo 'Deploying application behind Nginx...'
+        sh '''
+            # Remove any previous application container
+            docker rm -f ${APP_NAME}-prod 2>/dev/null || true
 
-                    # Run new container version
-                    docker run -d --name ${APP_NAME}-prod -p 80:80 --restart unless-stopped ${APP_NAME}:latest
-                    echo "Application deployed on port 80."
-                '''
-            }
-        }
+            # Run on an unused localhost port.
+            # Nginx must be configured to proxy to this port
+            # before this container is used for live traffic.
+            docker run -d \
+                --name ${APP_NAME}-prod \
+                -p 127.0.0.1:8084:80 \
+                --restart unless-stopped \
+                ${DOCKER_IMAGE}
+
+            # Verify the container responds
+            sleep 3
+            curl -sSf http://127.0.0.1:8084/ -o /dev/null
+
+            echo "Application container is healthy on port 8084."
+        '''
+    }
+}
+
     }
 
     post {
