@@ -38,29 +38,31 @@ pipeline {
             }
         }
 
-        stage('Detect Active Environment') {
-            steps {
-                script {
-                    def activePort = sh(
-                        script: "sudo grep -oE 'proxy_pass http://127\\.0\\.0\\.1:[0-9]+' /etc/nginx/conf.d/blue-green.conf | grep -oE '[0-9]+$'",
-                        returnStdout: true
-                    ).trim()
+       
+stage('Detect Active Environment') {
+    steps {
+        script {
+            def activePort = sh(
+                script: "sudo grep -oE 'proxy_pass http://127\\.0\\.0\\.1:[0-9]+' /etc/nginx/conf.d/blue-green.conf | grep -oE '[0-9]+' | tail -1",
+                returnStdout: true
+            ).trim()
 
-                    if (activePort == '8081') {
-                        env.TARGET_PORT = '8082'
-                        env.TARGET_NAME = 'green'
-                    } else if (activePort == '8082') {
-                        env.TARGET_PORT = '8081'
-                        env.TARGET_NAME = 'blue'
-                    } else {
-                        error("Unexpected Nginx upstream port: ${activePort}")
-                    }
-
-                    echo "Currently active port: ${activePort}"
-                    echo "Deploying to inactive environment: ${env.TARGET_NAME} (${env.TARGET_PORT})"
-                }
+            if (activePort == '8081') {
+                env.TARGET_PORT = '8082'
+                env.TARGET_NAME = 'green'
+            } else if (activePort == '8082') {
+                env.TARGET_PORT = '8081'
+                env.TARGET_NAME = 'blue'
+            } else {
+                error("Unexpected Nginx upstream port: ${activePort}")
             }
+
+            echo "Currently active port: ${activePort}"
+            echo "Deploying to inactive environment: ${env.TARGET_NAME} (${env.TARGET_PORT})"
         }
+    }
+}
+
 
         stage('Deploy to Inactive Environment') {
             steps {
