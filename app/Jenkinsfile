@@ -5,7 +5,7 @@ pipeline {
         APP_NAME     = 'vle8-app'
         IMAGE_TAG    = "${BUILD_NUMBER}"
         DOCKER_IMAGE = "${APP_NAME}:${IMAGE_TAG}"
-        CONTAINER_PORT = '8080'
+        CONTAINER_PORT = '8083'
     }
 
     stages {
