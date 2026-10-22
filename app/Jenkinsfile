@@ -43,7 +43,7 @@ stage('Detect Active Environment') {
     steps {
         script {
             def activePort = sh(
-                script: "sudo grep -oE 'proxy_pass http://127\\.0\\.0\\.1:[0-9]+' /etc/nginx/conf.d/blue-green.conf | grep -oE '[0-9]+' | tail -1",
+                script: "grep -oE 'proxy_pass http://127\\.0\\.0\\.1:[0-9]+' /etc/nginx/conf.d/blue-green.conf | grep -oE '[0-9]+' | tail -1",
                 returnStdout: true
             ).trim()
 
