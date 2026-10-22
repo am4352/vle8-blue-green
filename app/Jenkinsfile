@@ -37,23 +37,31 @@ pipeline {
             }
         }
 
-        stage('Container Smoke Test') {
-            steps {
-                echo 'Running smoke test on built container...'
-                sh '''
-                    # Spin up test container
-                    docker run -d --name ${APP_NAME}-test -p ${CONTAINER_PORT}:80 ${APP_NAME}:latest
-                    sleep 3
+       
+stage('Container Smoke Test') {
+    steps {
+        echo 'Running smoke test on built container...'
+        sh '''
+            docker rm -f ${APP_NAME}-test 2>/dev/null || true
 
-                    # Verify HTTP response
-                    curl -s -f http://localhost:${CONTAINER_PORT} > /dev/null && echo "Health check passed!"
+            docker run -d \
+                --name ${APP_NAME}-test \
+                -p 127.0.0.1:${CONTAINER_PORT}:80 \
+                ${APP_NAME}:latest
 
-                    # Cleanup test container
-                    docker stop ${APP_NAME}-test
-                    docker rm ${APP_NAME}-test
-                '''
-            }
-        }
+            trap 'docker rm -f ${APP_NAME}-test >/dev/null 2>&1 || true' EXIT
+
+            sleep 3
+
+            curl -sSf \
+                http://127.0.0.1:${CONTAINER_PORT}/ \
+                > /dev/null
+
+            echo "Health check passed!"
+        '''
+    }
+}
+
 
         stage('Deploy') {
             steps {
